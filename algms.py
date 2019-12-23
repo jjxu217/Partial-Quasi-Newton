@@ -16,20 +16,6 @@ import numpy as np
 import random
 
 
-# 2d rosenbrock function and its first and second order derivatives
-#     https://en.wikipedia.org/wiki/Rosenbrock_function
-def rosenbrock(x):
-  return 100 * (x[1] - x[0]**2)**2 + (1 - x[0])**2
-
-
-def grad_rosen(x):
-  return np.array([200*(x[1]-x[0]**2)*(-2*x[0]) + 2*(x[0]-1), 200*(x[1]-x[0]**2)])
-
-
-def hessian_rosen(x):
-  return np.array([[1200*x[0]**2 - 400*x[1] + 2, -400*x[0]], [-400*x[0], 200]])
-
-
 # line-search conditions
 def wolfe(f, g, xk, alpha, pk):
   c1 = 1e-4
@@ -87,11 +73,33 @@ def steepest_descent(f, g, x0, iterations, error):
     pk = -g(x)
     alpha = step_length(f, g, x, 1.0, pk, c2)
     x = x + alpha * pk
-    if i % 100 == 0:
+    if i % 1000 == 0:
       print("  iter={}, g={}, alpha={}, x={}, f(x)={},SquaredGradient={}".\
         format(i, pk, alpha, x, f(x), np.linalg.norm(pk)))
 
-    if np.linalg.norm(x - x_old) < error:
+    if np.linalg.norm(pk) < error:
+      print("end:  iter={}, SquaredGradient={}, x_error_norm={}".format(i, np.linalg.norm(pk), np.linalg.norm(x - x_old)))
+      break
+    x_old = x
+  return x, i
+
+  # steepest_descent_diag_Hessian algorithms
+def steepest_descent_diag_Hessian(Q, f, g, x0, iterations, error):
+  x = x0
+  x_old = x
+  c2 = 0.9
+  for i in range(iterations):
+
+    Bk = np.diag(Q)
+    Hk = 1 / (Bk + 10e-6)
+    pk = -Hk * g(x)
+    alpha = step_length(f, g, x, 1.0, pk, c2)
+    x = x + alpha * pk
+    if i % 1000 == 0:
+      print("  iter={}, g={}, alpha={}, x={}, f(x)={},SquaredGradient={}".\
+        format(i, pk, alpha, x, f(x), np.linalg.norm(pk)))
+
+    if np.linalg.norm(pk) < error:
       print("end:  iter={}, SquaredGradient={}, x_error_norm={}".format(i, np.linalg.norm(pk), np.linalg.norm(x - x_old)))
       break
     x_old = x
@@ -100,20 +108,22 @@ def steepest_descent(f, g, x0, iterations, error):
 
 def newton(f, g, H, x0, iterations, error):
   x = x0
-  x_old = x
   c2 = 0.9
   for i in range(iterations):
     pk = -np.linalg.solve(H(x), g(x))
     alpha = step_length(f, g, x, 1.0, pk, c2)
     x = x + alpha * pk
-    if i % 100 == 0:
+    if i % 1000 == 0:
       print("  iter={}, direction={}, alpha={}, x={}, f(x)={}, SquaredGradient={}".\
         format(i, pk, alpha, x, f(x), np.linalg.norm(g(x))))
       
-    if np.linalg.norm(x - x_old) < error:
-      print("end:  iter={}, SquaredGradient={}, x_error_norm={}".format(i, np.linalg.norm(g(x)), np.linalg.norm(x - x_old)))
+    cur_error = np.linalg.norm(g(x))
+    x_error = np.linalg.norm(alpha * pk)
+    if  cur_error < error:  
       break
-    x_old = x
+
+  print("end:  iter={}, SquaredGradient={}, x_error_norm={}".\
+    format(i, np.linalg.norm(g(x)), x_error))
   return x, i + 1
 
 
@@ -132,20 +142,22 @@ def conjugate_gradient(f, g, x0, iterations, error):
     beta_k1 = np.dot(gk1, gk1) / np.dot(gk, gk)
     pk1 = -gk1 + beta_k1 * pk
 
-    if i % 100 == 0:
+    if i % 1000 == 0:
       print("  iter={}, direction={}, alpha={}, x={}, f(x)={}, SquaredGradient={}, x_error_norm={}".\
         format(i, pk, alpha, xk, f(xk), np.linalg.norm(gk), np.linalg.norm(xk1 - xk)))
   
-
-    if np.linalg.norm(xk1 - xk) < error:
-      print("end:  iter={}, SquaredGradient={}, x_error_norm={}".format(i, np.linalg.norm(gk1), np.linalg.norm(xk1 - xk)))
-      xk = xk1
-      break
-
+    cur_error = np.linalg.norm(gk1)
+    x_error = np.linalg.norm(xk - xk1)
     xk = xk1
     gk = gk1
     pk = pk1
 
+    if  cur_error < error:
+      break
+
+    
+  print("end:  iter={}, SquaredGradient={}, x_error_norm={}".\
+    format(i, np.linalg.norm(gk1), x_error))
   return xk, i + 1
 
 
@@ -154,7 +166,7 @@ def bfgs(f, g, x0, iterations, error):
   c2 = 0.9
   I = np.identity(xk.size)
   gk = g(xk)
-  k = 20
+  k = 30
 
   for i in range(iterations):
     if i % k == 0:
@@ -175,24 +187,29 @@ def bfgs(f, g, x0, iterations, error):
     yk = gk1 - gk
 
     # compute H_{k+1} by BFGS update
-    rho_k = float(1.0 / yk.dot(sk))
+    ys = yk.dot(sk)
+    if ys < 1e-6:
+      ys = 1e-6
+    rho_k = float(1.0 / ys)
 
     Hk1 = (I - rho_k * np.outer(sk, yk)).dot(Hk).dot(I - \
            rho_k * np.outer(yk, sk)) + rho_k * np.outer(sk, sk)
 
-    if i % 100 == 0:
+    if i % 1000 == 0:
       print("  iter={}, direction={}, alpha={}, x={}, f(x)={}, SquaredGradient={}, x_error_norm={}".\
         format(i, pk, alpha, xk, f(xk), np.linalg.norm(gk), np.linalg.norm(xk1 - xk)))
 
-    if np.linalg.norm(xk1 - xk) < error:
-      print("end:  iter={}, SquaredGradient={}, x_error_norm={}".format(i, np.linalg.norm(gk1), np.linalg.norm(xk1 - xk)))
-      xk = xk1
-      break
-
+    cur_error = np.linalg.norm(gk1)
+    x_error = np.linalg.norm(xk - xk1)
     Hk = Hk1
     xk = xk1
     gk = gk1
 
+    if  cur_error < error:
+      break
+    
+  print("end:  iter={}, SquaredGradient={}, x_error_norm={}".\
+        format(i, np.linalg.norm(gk1), x_error))
   return xk, i + 1
 
 
@@ -200,7 +217,7 @@ def l_bfgs(f, g, x0, iterations, error, m=10):
   xk = x0
   c2 = 0.9
   I = np.identity(xk.size)
-  Hk = I
+  #Hk = I
 
   sks = []
   yks = []
@@ -213,7 +230,7 @@ def l_bfgs(f, g, x0, iterations, error, m=10):
     for i in reversed(range(m_t)):
       s = sks[i]
       y = yks[i]
-      rho_i = float(1.0 / y.T.dot(s))
+      rho_i = float(1.0 / (y.T.dot(s)  + 1e-8))
       a[i] = rho_i * s.dot(q)
       q = q - a[i] * y
 
@@ -222,7 +239,7 @@ def l_bfgs(f, g, x0, iterations, error, m=10):
     for i in range(m_t):
       s = sks[i]
       y = yks[i]
-      rho_i = float(1.0 / y.T.dot(s))
+      rho_i = float(1.0 / (y.T.dot(s) + 1e-8))
       b[i] = rho_i * y.dot(r)
       r = r + s * (a[i] - b[i])
 
@@ -253,26 +270,48 @@ def l_bfgs(f, g, x0, iterations, error, m=10):
     # compute H_{k+1} by BFGS update
     # rho_k = float(1.0 / yk.dot(sk))
 
-    if i % 100 == 0:
-      print("\ n  iter={}, direction={}, alpha={}, x={}, f(x)={}, SquaredGradient={}, x_error_norm={}".\
+    if i % 1000 == 0:
+      print("\n  iter={}, direction={}, alpha={}, x={}, f(x)={}, SquaredGradient={}, x_error_norm={}".\
         format(i, pk, alpha, xk, f(xk), np.linalg.norm(gk), np.linalg.norm(xk1 - xk)))
 
-    if np.linalg.norm(xk1 - xk) < error:
-      print("\n end:  iter={}, direction={}, alpha={},SquaredGradient={}, x_error_norm={}".format(i, pk, alpha,np.linalg.norm(gk1), np.linalg.norm(xk1 - xk)))
-      xk = xk1
+    cur_error = np.linalg.norm(gk1)
+    x_error = np.linalg.norm(xk - xk1)
+    xk = xk1
+    if  cur_error < error:
       break
 
-    xk = xk1
+  print("\n end:  iter={}, direction={}, alpha={},SquaredGradient={}, x_error_norm={}".\
+        format(i, pk, alpha,np.linalg.norm(gk1), x_error))
 
   return xk, i + 1
 
-def top_cumulative_g_diff(cumulative_y, N, M):
-    temp = np.argpartition(cumulative_y, -M)
-    return temp[-M:], temp[:N-M]
+def random_index(N, M):
+    idx = np.array(range(N))
+    np.random.shuffle(idx)
+    return idx[:M], idx[M:]
 
 def top_sy_product(sy, N, M):
     temp = np.argpartition(sy, -M)
     return temp[-M:], temp[:N-M]
+
+def threshold(lower, gk, N, M):
+    sort_idx = np.argsort(gk)
+
+    if gk[sort_idx[N - M]] < lower:
+      return sort_idx[-M:], sort_idx[:N - M]
+
+    p_index = np.zeros(M, dtype=int)
+    np_index = np.zeros(N - M, dtype=int)
+    p_cnt = np_cnt = 0
+    for i in range(N):
+      if gk[sort_idx[i]] > lower and p_cnt < M:
+        p_index[p_cnt] = sort_idx[i]
+        p_cnt += 1
+      else:
+        np_index[np_cnt] = sort_idx[i]
+        np_cnt += 1
+    return p_index, np_index
+        
 
 def PQN(f, g, x0, iterations, error, portion):
     xk = x0
@@ -325,10 +364,8 @@ def PQN(f, g, x0, iterations, error, portion):
         if i % 1000 == 0:
           print("\n  iter={}, direction={}, alpha={}, x={}, f(x)={}, SquaredGradient={}, x_error_norm={}".format(i, pk, alpha, xk, f(xk), np.linalg.norm(gk), np.linalg.norm(xk1 - xk)))
             
-
-        if np.linalg.norm(xk1 - xk) < error:
-          print("\n end:  iter={}, direction_p={}, direction_np={}, alpha={},SquaredGradient={}, x_error_norm={}".\
-              format(i, pk[p_index], pk[np_index], alpha, np.linalg.norm(gk1), np.linalg.norm(xk1 - xk)))
+        cur_error = np.linalg.norm(xk1 - xk)
+        if cur_error < error:
           xk = xk1
           break
 
@@ -336,35 +373,101 @@ def PQN(f, g, x0, iterations, error, portion):
         xk = xk1
         gk = gk1
 
+    print("\n end:  iter={}, direction_p={}, direction_np={}, alpha={},SquaredGradient={}, x_error_norm={}".\
+              format(i, pk[p_index], pk[np_index], alpha, np.linalg.norm(gk1), cur_error))
+            
     return xk, i + 1
 
-
-def PQN_v2(f, g, x0, iterations, error, portion):
+def PQN_threshold(Q, f, g, x0, iterations, error, portion):
     xk = x0
     c2 = 0.9
     N = xk.size
     M = int(N * portion)
     I = np.identity(M)  
     gk = g(xk)
-    k = 20
+    k = 30
     pk = np.zeros(N)
     Hk = I  
-    cumulative_sy = np.zeros(N)
-    temp = np.argpartition(gk, M-1)
-    p_index, np_index = temp[:M], temp[M:]
 
 
     for i in range(iterations):
         #Reset Hessian
-        if i != 0 and i % k == 0:
+        if i % k == 0:
             Hk = I        
-            p_index, np_index = top_sy_product(cumulative_sy, N, M)
-            cumulative_sy = np.zeros(N)
-
-        # compute search direction        
+            p_index, np_index = threshold(10e-2, gk, N, M)
+            
+        Bk_np = np.diag(Q)[np_index]
+        Hk_np = 1 / (Bk_np + 1e-8)
+        pk[np_index] = -Hk_np * gk[np_index]
+        #BFGS
         pk[p_index] = -Hk.dot(gk[p_index])
-        pk[np_index] = -gk[np_index]
+        
 
+        # obtain step length by line search
+        alpha = step_length(f, g, xk, 1.0, pk, c2)
+
+        # update x
+        xk1 = xk + alpha * pk
+        gk1 = g(xk1)
+
+        # define sk and yk for convenience
+        sk = xk1[p_index] - xk[p_index]
+        yk = gk1[p_index] - gk[p_index]
+
+        # compute H_{k+1} by BFGS update
+        ys = yk.dot(sk)
+        if abs(ys) < 1e-6:
+          ys = 1e-6
+        rho_k = float(1.0 / ys)
+        
+
+        Hk1 = (I - rho_k * np.outer(sk, yk)).dot(Hk).dot(I - \
+            rho_k * np.outer(yk, sk)) + rho_k * np.outer(sk, sk)
+
+        if i % 1000 == 0:
+          print("\n  iter={}, direction={}, alpha={}, x={}, f(x)={}, SquaredGradient={}, x_error_norm={}".format(i, pk, alpha, xk, f(xk), np.linalg.norm(gk), np.linalg.norm(xk1 - xk)))
+            
+        cur_error = np.linalg.norm(gk1)
+        x_error = np.linalg.norm(xk - xk1)
+        Hk = Hk1
+        xk = xk1
+        gk = gk1
+
+        if cur_error < error:
+          break
+        
+
+    print("\n end:  iter={}, direction_p={}, direction_np={}, alpha={},SquaredGradient={}, x_error_norm={}".\
+              format(i, pk[p_index], pk[np_index], alpha, np.linalg.norm(gk1), x_error))
+            
+    return xk, i + 1
+
+
+def PQN_random(Q, f, g, x0, iterations, error, portion):
+    xk = x0
+    c2 = 0.9
+    N = xk.size
+    M = int(N * portion)
+    I = np.identity(M)  
+    gk = g(xk)
+    k = 30
+    pk = np.zeros(N)
+    
+    for i in range(iterations):
+        #Reset Hessian
+        if i % k == 0:
+            Hk = I        
+            #find the array of index that will be selected to calculate Hessian
+            p_index, np_index = random_index(N, M)
+
+        # compute search direction    
+        #Gradient descent with diagnal Hessian  
+        Bk_np = np.diag(Q)[np_index]
+        Hk_np = 1 / (Bk_np + 1e-8)
+        pk[np_index] = -Hk_np * gk[np_index]
+        #BFGS
+        pk[p_index] = -Hk.dot(gk[p_index])
+        
         # obtain step length by line search
         alpha = step_length(f, g, xk, 1.0, pk, c2)
 
@@ -378,10 +481,10 @@ def PQN_v2(f, g, x0, iterations, error, portion):
         
 
         # compute H_{k+1} by BFGS update
-        cumulative_sy += np.absolute((gk1 - gk) * (xk1 - xk))
+        
         ys = (yk * sk).sum()
-        if abs(ys) < 1e-6:
-          ys = 1e-6
+        # if ys < 1e-10:
+        #   ys = 1e-10
         rho_k = float(1.0 / ys)
         
 
@@ -389,73 +492,20 @@ def PQN_v2(f, g, x0, iterations, error, portion):
             rho_k * np.outer(yk, sk)) + rho_k * np.outer(sk, sk)
 
         if i % 1000 == 0:
-          print("\n  iter={}, direction={}, alpha={}, x={}, f(x)={}, SquaredGradient={}, x_error_norm={}".\
-            format(i, pk, alpha, xk, f(xk), np.linalg.norm(gk), np.linalg.norm(xk1 - xk)))
+          print("\n  iter={}, direction_p={}, direction_np={}, alpha={}, x={}, f(x)={}, SquaredGradient={}, x_error_norm={}".\
+            format(i, pk[p_index], pk[np_index], alpha, xk, f(xk), np.linalg.norm(gk), np.linalg.norm(xk1 - xk)))
             
-
-        if np.linalg.norm(xk1 - xk) < error:
-            print("\n end:  iter={}, direction_p={}, direction_np={}, alpha={},SquaredGradient={}, x_error_norm={}".\
-              format(i, pk[p_index], pk[np_index], alpha, np.linalg.norm(gk1), np.linalg.norm(xk1 - xk)))
-            xk = xk1
-            break
-
+        cur_error = np.linalg.norm(gk1)
+        x_error = np.linalg.norm(xk - xk1)
         Hk = Hk1
         xk = xk1
         gk = gk1
 
+        if  cur_error < error:  
+            break
+
+    print("\n end:  iter={}, direction_p={}, direction_np={}, alpha={},SquaredGradient={}, x_error_norm={}".\
+              format(i, pk[p_index], pk[np_index], alpha, np.linalg.norm(gk1), x_error))
+        
     return xk, i + 1
 
-# if __name__ == '__main__':
-#   x0 = np.array([0, 0])
-#   error = 1e-4
-#   max_iterations = 1000
-
-#   print('\n======= Steepest Descent ======\n')
-#   start = time.time()
-#   x, n_iter = steepest_descent(rosenbrock, grad_rosen, x0,
-#                                iterations=max_iterations, error=error)
-#   end = time.time()
-#   print("  Steepest Descent terminated in {} iterations, x = {}, f(x) = {}, time elapsed {}, time per iter {}"\
-#     .format(n_iter, x, rosenbrock(x), end - start, (end - start) / n_iter))
-
-#   print('\n======= Conjugate Gradient Method ======\n')
-#   start = time.time()
-#   x, n_iter = conjugate_gradient(rosenbrock, grad_rosen, x0,
-#                                  iterations=max_iterations, error=error)
-#   end = time.time()
-#   print("  Conjugate Gradient Method terminated in {} iterations, x = {}, f(x) = {}, time elapsed {}, time per iter {}"\
-#     .format(n_iter, x, rosenbrock(x), end - start, (end - start) / n_iter))
-
-#   print('\n======= Newton\'s Method ======\n')
-#   start = time.time()
-#   x, n_iter = newton(rosenbrock, grad_rosen, hessian_rosen, x0,
-#                      iterations=max_iterations, error=error)
-#   end = time.time()
-#   print("  Newton\'s Method terminated in {} iterations, x = {}, f(x) = {}, time elapsed {}, time per iter {}" \
-#     .format(n_iter, x, rosenbrock(x), end - start, (end - start) / n_iter))
-
-#   print('\n======= Broyden-Fletcher-Goldfarb-Shanno ======\n')
-#   start = time.time()
-#   x, n_iter = bfgs(rosenbrock, grad_rosen, x0,
-#                    iterations=max_iterations, error=error)
-#   end = time.time()
-#   print("  BFGS terminated in {} iterations, x = {}, f(x) = {}, time elapsed {}, time per iter {}"\
-#     .format(n_iter, x, rosenbrock(x), end - start, (end - start) / n_iter))
-
-#   print('\n======= Limited memory Broyden-Fletcher-Goldfarb-Shanno ======\n')
-#   start = time.time()
-#   x, n_iter = l_bfgs(rosenbrock, grad_rosen, x0,
-#                      iterations=max_iterations, error=error)
-#   end = time.time()
-#   print("  l-BFGS terminated in {} iterations, x = {}, f(x) = {}, time elapsed {}, time per iter {}"\
-#     .format(n_iter, x, rosenbrock(x), end - start, (end - start) / n_iter))
-
-
-
-#   print('\n======= Partial Quasi-Newton ======\n')
-#   start = time.time()
-#   x, n_iter = PQN(rosenbrock, grad_rosen, x0,
-#                      iterations=max_iterations, error=error, portion=0)
-#   end = time.time()
-#   print("  PQN terminated in {} iterations, x = {}, f(x) = {}, time elapsed {}, time per iter {}"\
-#     .format(n_iter, x, rosenbrock(x), end - start, (end - start) / n_iter))
